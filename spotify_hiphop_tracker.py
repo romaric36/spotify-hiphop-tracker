@@ -37,6 +37,14 @@ CSV_HEADERS = [
     "spotify_id",
 ]
 
+SEARCH_TERMS = [
+    '"hip hop" tag:new',
+    "hip-hop tag:new",
+    "rap tag:new",
+    "trap tag:new",
+    "drill tag:new",
+]
+
 
 def get_spotify_token(client_id: str, client_secret: str) -> str:
     """Get a Spotify API token using the Client Credentials flow."""
@@ -61,14 +69,7 @@ def search_new_hiphop_albums(token: str, target_date: str) -> list[dict[str, str
     headers = {"Authorization": f"Bearer {token}"}
     albums_seen: set[str] = set()
     albums_found: list[dict[str, str]] = []
-    queries = [
-        "genre:hip-hop tag:new",
-        "genre:rap tag:new",
-        "genre:trap tag:new",
-        "genre:drill tag:new",
-    ]
-
-    for query in queries:
+    for query in SEARCH_TERMS:
         offset = 0
 
         while offset <= 200:
@@ -83,6 +84,13 @@ def search_new_hiphop_albums(token: str, target_date: str) -> list[dict[str, str
                 },
                 timeout=10,
             )
+
+            # Spotify can reject some advanced search syntaxes with HTTP 400.
+            # We skip those queries instead of failing the whole daily job.
+            if response.status_code == 400:
+                print(f"Skipping unsupported Spotify query: {query}")
+                break
+
             response.raise_for_status()
             data = response.json()
             items = data["albums"]["items"]
