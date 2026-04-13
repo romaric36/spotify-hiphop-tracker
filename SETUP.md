@@ -1,118 +1,112 @@
 # Setup Guide — Spotify Hip-Hop Daily Tracker
 
-Ce guide te permet de mettre en place le tracker en ~20 minutes.
+Ce setup n'utilise plus l'API Google Sheets. Le script génère des fichiers CSV dans GitHub, et Google Sheets les lit directement via `IMPORTDATA`.
 
----
+## Structure du repo
 
-## 📁 Structure des fichiers
-
-```
+```text
 ton-repo-github/
-├── spotify_hiphop_tracker.py        ← script principal
+├── spotify_hiphop_tracker.py
 ├── requirements.txt
+├── releases.csv
+├── releases_history.csv
 └── .github/
     └── workflows/
-        └── daily_hiphop_releases.yml  ← tâche planifiée GitHub Actions
+        └── daily_hiphop_releases.yml
 ```
 
----
+## Ce que fait le projet
 
-## Étape 1 — Spotify Developer Credentials
+- `releases.csv` contient uniquement les sorties détectées pour le jour courant.
+- `releases_history.csv` conserve l'historique cumulé des sorties trouvées au fil des exécutions.
+- GitHub Actions lance le script chaque nuit et commit automatiquement les CSV mis à jour.
+- Google Sheets lit ensuite le CSV publié sur GitHub avec une simple formule.
 
-Tu as déjà un compte. Vérifie juste que ton app a bien :
-- Le **Client ID** et **Client Secret** disponibles sur https://developer.spotify.com/dashboard
-- Aucun scope OAuth n'est nécessaire (on utilise le flow Client Credentials, sans login utilisateur)
+## Étape 1 — Spotify Developer
 
----
+Vérifie que ton application Spotify Developer dispose bien de :
 
-## Étape 2 — Google Sheets : créer un Service Account
+- `SPOTIFY_CLIENT_ID`
+- `SPOTIFY_CLIENT_SECRET`
 
-1. Va sur https://console.cloud.google.com
-2. Crée un nouveau projet (ou utilise un existant)
-3. Active l'API **Google Sheets** :
-   - Menu → APIs & Services → Library → cherche "Google Sheets API" → Enable
-4. Crée un Service Account :
-   - Menu → APIs & Services → Credentials → Create Credentials → Service Account
-   - Donne-lui un nom (ex: `spotify-tracker`)
-   - Clique sur "Done"
-5. Génère une clé JSON :
-   - Clique sur le service account créé → onglet "Keys" → Add Key → Create new key → JSON
-   - Télécharge le fichier `.json` — **garde-le précieusement**
+On utilise le flow `Client Credentials`, donc aucun scope OAuth utilisateur n'est nécessaire.
 
----
+## Étape 2 — Secrets GitHub
 
-## Étape 3 — Créer et configurer le Google Spreadsheet
+Dans ton repo GitHub :
 
-1. Crée un nouveau Google Spreadsheet sur https://sheets.google.com
-2. Donne-lui un nom (ex: "Hip-Hop Releases Daily")
-3. **Partage-le avec le service account** :
-   - Bouton "Partager" → colle l'email du service account (format `xxx@xxx.iam.gserviceaccount.com`)
-   - Donne-lui le rôle **Éditeur**
-4. Copie l'**ID du Spreadsheet** depuis l'URL :
-   ```
-   https://docs.google.com/spreadsheets/d/SPREADSHEET_ID_ICI/edit
-   ```
+1. Va dans `Settings` → `Secrets and variables` → `Actions`
+2. Clique sur `New repository secret`
+3. Ajoute seulement ces 2 secrets :
 
----
+| Nom | Valeur |
+|---|---|
+| `SPOTIFY_CLIENT_ID` | Ton Client ID Spotify |
+| `SPOTIFY_CLIENT_SECRET` | Ton Client Secret Spotify |
 
-## Étape 4 — Créer le repo GitHub et ajouter les secrets
+## Étape 3 — Repo public recommandé
 
-1. Crée un nouveau repo GitHub (public ou privé)
-2. Copie les 3 fichiers dedans : `spotify_hiphop_tracker.py`, `requirements.txt`, `.github/workflows/daily_hiphop_releases.yml`
-3. Va dans **Settings → Secrets and variables → Actions → New repository secret**
+Pour que Google Sheets puisse lire directement le CSV avec `IMPORTDATA`, le repo doit être **public**.
 
-   Ajoute ces 4 secrets :
+Si le repo reste privé :
 
-   | Nom | Valeur |
-   |-----|--------|
-   | `SPOTIFY_CLIENT_ID` | Ton Client ID Spotify |
-   | `SPOTIFY_CLIENT_SECRET` | Ton Client Secret Spotify |
-   | `GOOGLE_SPREADSHEET_ID` | L'ID du spreadsheet (étape 3) |
-   | `GOOGLE_SERVICE_ACCOUNT_JSON` | Le **contenu complet** du fichier JSON téléchargé (étape 2) |
+- `raw.githubusercontent.com` ne sera pas lisible par Google Sheets
+- il faudra passer par une autre méthode d'exposition du CSV
 
-   > ⚠️ Pour `GOOGLE_SERVICE_ACCOUNT_JSON` : ouvre le fichier JSON dans un éditeur texte, sélectionne tout le contenu et colle-le directement dans le champ valeur du secret.
+## Étape 4 — Premier lancement GitHub Actions
 
----
+1. Ouvre l'onglet `Actions`
+2. Clique sur `🎵 Daily Hip-Hop Releases Tracker`
+3. Clique sur `Run workflow`
+4. Attends la fin du job
 
-## Étape 5 — Tester manuellement
+Après ce premier run, tu devrais voir apparaître dans le repo :
 
-1. Va dans l'onglet **Actions** de ton repo GitHub
-2. Clique sur le workflow **"🎵 Daily Hip-Hop Releases Tracker"**
-3. Clique sur **"Run workflow"** → Run
-4. Vérifie les logs et contrôle ton Google Spreadsheet
+- `releases.csv`
+- `releases_history.csv`
 
----
+## Étape 5 — Connecter Google Sheets
 
-## ⏰ Planning automatique
+Crée un Google Sheet puis colle dans une cellule vide :
 
-Le workflow tourne automatiquement à **01h00 heure de Paris (CEST)** chaque nuit.
-Si tu veux changer l'heure, modifie la ligne `cron` dans le workflow :
-```yaml
-- cron: '0 23 * * *'   # 23:00 UTC = 01:00 CEST (été)
-- cron: '0 0 * * *'    # 00:00 UTC = 01:00 CET  (hiver)
+```text
+=IMPORTDATA("https://raw.githubusercontent.com/romaric36/spotify-hiphop-tracker/main/releases_history.csv")
 ```
 
----
+Si tu préfères n'afficher que les sorties du jour :
 
-## 📊 Format du Google Spreadsheet
+```text
+=IMPORTDATA("https://raw.githubusercontent.com/romaric36/spotify-hiphop-tracker/main/releases.csv")
+```
 
-| Date découverte | Artiste(s) | Album | Type | Nb titres | Date de sortie | Spotify URL | Pochette URL | ID Spotify |
+## Colonnes du CSV
+
+| discovery_date | release_date | artists | album | album_type | total_tracks | spotify_url | image_url | spotify_id |
 |---|---|---|---|---|---|---|---|---|
-| 2026-04-10 | Drake | Some Album | Album | 16 | 2026-04-10 | https://... | https://... | abc123 |
 
----
+## Planification
 
-## ⚠️ Note importante
+Le workflow est planifié avec :
 
-Depuis février 2026, Spotify a supprimé l'endpoint `/browse/new-releases`.
-Le script utilise l'API Search avec `tag:new` et filtre sur la date du jour.
-Cette approche couvre les genres : **hip-hop, rap, trap, drill**.
-Il est possible que quelques sorties très tardives dans la journée n'apparaissent qu'au lendemain.
+```yaml
+- cron: '0 23 * * *'
+```
 
----
+Cela correspond à :
 
-## 🛠️ Dépannage
+- `01:00` à Paris en heure d'été
+- `00:00` à Paris en heure d'hiver
 
-- **Erreur 401 Spotify** → vérifie `SPOTIFY_CLIENT_ID` et `SPOTIFY_CLIENT_SECRET`
-- **Erreur 403 Google Sheets** → vérifie que le spreadsheet est bien partagé avec l'email du service account
-- **0 résultats** → normal si aucune sortie hip-hop le jour J (rares les weekends). Tu peux tester un vendredi (jour habituel de sortie des albums).
+Le script, lui, calcule toujours la date avec le fuseau `Europe/Paris`, donc les lignes écrites restent cohérentes avec l'heure française.
+
+## Limites à connaître
+
+- Spotify ne fournit pas un filtre parfait "toutes les sorties rap du jour".
+- Le script repose sur `tag:new` + plusieurs genres (`hip-hop`, `rap`, `trap`, `drill`) puis filtre sur la date du jour.
+- Certaines sorties peuvent apparaître avec un léger décalage selon leur disponibilité régionale.
+
+## Dépannage
+
+- `401` Spotify : vérifie les deux secrets GitHub
+- aucun CSV après le run : regarde les logs du workflow dans l'onglet `Actions`
+- `IMPORTDATA` vide : vérifie que le repo est bien public et que le fichier existe sur la branche `main`

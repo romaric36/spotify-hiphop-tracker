@@ -2,12 +2,14 @@ name: 🎵 Daily Hip-Hop Releases Tracker
 
 on:
   schedule:
-    # Runs at 23:00 UTC = 01:00 AM Paris (CEST, UTC+2) in summer
-    # Adjust to "0 0 * * *" in winter (CET, UTC+1)
+    # 23:00 UTC = 01:00 in Paris during summer time, 00:00 in winter.
     - cron: '0 23 * * *'
 
   # Allow manual trigger from GitHub Actions tab (useful for testing)
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   track-releases:
@@ -17,6 +19,8 @@ jobs:
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 🐍 Set up Python 3.11
         uses: actions/setup-python@v5
@@ -31,6 +35,13 @@ jobs:
         env:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
-          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: python spotify_hiphop_tracker.py
+
+      - name: 💾 Commit CSV updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases.csv releases_history.csv
+          git diff --cached --quiet && exit 0
+          git commit -m "Update daily hip-hop releases"
+          git push
