@@ -1,4 +1,4 @@
-# Setup Guide — Spotify Hip-Hop Daily Tracker
+# Setup Guide — Spotify Hip-Hop Weekly Tracker
 
 Ce setup n'utilise plus l'API Google Sheets. Le script génère des fichiers CSV dans GitHub, et Google Sheets les lit directement via `IMPORTDATA`.
 
@@ -17,9 +17,9 @@ ton-repo-github/
 
 ## Ce que fait le projet
 
-- `releases.csv` contient uniquement les sorties détectées pour le jour courant.
+- `releases.csv` contient uniquement les sorties détectées dans la fenêtre hebdomadaire courante.
 - `releases_history.csv` conserve l'historique cumulé des sorties trouvées au fil des exécutions.
-- GitHub Actions lance le script chaque nuit et commit automatiquement les CSV mis à jour.
+- GitHub Actions lance le script chaque vendredi matin et commit automatiquement les CSV mis à jour.
 - Google Sheets lit ensuite le CSV publié sur GitHub avec une simple formule.
 
 ## Étape 1 — Spotify Developer
@@ -56,7 +56,7 @@ Si le repo reste privé :
 ## Étape 4 — Premier lancement GitHub Actions
 
 1. Ouvre l'onglet `Actions`
-2. Clique sur `🎵 Daily Hip-Hop Releases Tracker`
+2. Clique sur `🎵 Weekly Hip-Hop Releases Tracker`
 3. Clique sur `Run workflow`
 4. Attends la fin du job
 
@@ -73,7 +73,7 @@ Crée un Google Sheet puis colle dans une cellule vide :
 =IMPORTDATA("https://raw.githubusercontent.com/romaric36/spotify-hiphop-tracker/main/releases_history.csv")
 ```
 
-Si tu préfères n'afficher que les sorties du jour :
+Si tu préfères n'afficher que la fenêtre hebdomadaire courante :
 
 ```text
 =IMPORTDATA("https://raw.githubusercontent.com/romaric36/spotify-hiphop-tracker/main/releases.csv")
@@ -89,20 +89,20 @@ Si tu préfères n'afficher que les sorties du jour :
 Le workflow est planifié avec :
 
 ```yaml
-- cron: '0 23 * * *'
+- cron: '0 3 * * 5'
 ```
 
 Cela correspond à :
 
-- `01:00` à Paris en heure d'été
-- `00:00` à Paris en heure d'hiver
+- `05:00` à Paris en heure d'été le vendredi
+- `04:00` à Paris en heure d'hiver le vendredi
 
-Le script, lui, calcule toujours la date avec le fuseau `Europe/Paris`, donc les lignes écrites restent cohérentes avec l'heure française.
+Le script calcule une fenêtre de sortie du `samedi` précédent jusqu'au `vendredi` courant avec le fuseau `Europe/Paris`.
 
 ## Limites à connaître
 
-- Spotify ne fournit pas un filtre parfait "toutes les sorties rap du jour".
-- Le script repose sur `tag:new` + plusieurs genres (`hip-hop`, `rap`, `trap`, `drill`) puis filtre sur la date du jour.
+- Spotify ne fournit pas un filtre parfait "toutes les sorties rap de la semaine".
+- Le script repose sur `Search` + contrôle des genres artistes (`hip hop`, `rap`, `r&b`) puis filtre les dates entre le samedi précédent et le vendredi courant.
 - Certaines sorties peuvent apparaître avec un léger décalage selon leur disponibilité régionale.
 
 ## Dépannage

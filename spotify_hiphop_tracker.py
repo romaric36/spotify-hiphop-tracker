@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Spotify Hip-Hop / Rap — Daily New Releases Tracker
-==================================================
-Fetches hip-hop and rap albums released today and exports them to CSV files
+Spotify Hip-Hop / Rap — Weekly Releases Tracker
+===============================================
+Fetches hip-hop, rap, and R&B albums released during the weekly window and exports them to CSV files
 that can be committed by GitHub Actions and imported into Google Sheets.
 
 Required environment variables:
@@ -15,7 +15,7 @@ from __future__ import annotations
 import base64
 import csv
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -76,8 +76,26 @@ def get_json(url: str, token: str, params: dict | None = None) -> dict:
     return response.json()
 
 
-def fetch_new_releases(token: str, target_date: str) -> list[dict]:
-    """Best-effort fetch of today's new releases via the Search API."""
+def get_week_window(anchor_date: date) -> tuple[date, date]:
+    """Return the Saturday-to-Friday weekly window associated with the anchor date."""
+    days_since_friday = (anchor_date.weekday() - 4) % 7
+    week_end = anchor_date - timedelta(days=days_since_friday)
+    week_start = week_end - timedelta(days=6)
+    return week_start, week_end
+
+
+def build_target_dates(start_date: date, end_date: date) -> set[str]:
+    """Return all YYYY-MM-DD strings inside the weekly window."""
+    current = start_date
+    target_dates: set[str] = set()
+    while current <= end_date:
+        target_dates.add(current.strftime("%Y-%m-%d"))
+        current += timedelta(days=1)
+    return target_dates
+
+
+def fetch_new_releases(token: str, target_dates: set[str]) -> list[dict]:
+    """Best-effort fetch of weekly new releases via the Search API."""
     albums_found: list[dict] = []
     albums_seen: set[str] = set()
 
@@ -95,7 +113,7 @@ def fetch_new_releases(token: str, target_date: str) -> list[dict]:
                 break
 
             for album in items:
-                if album.get("release_date") != target_date:
+                if album.get("release_date") not in target_dates:
                     continue
 
                 album_id = album["id"]
@@ -136,9 +154,13 @@ def album_matches_target_genres(album: dict, genres_by_artist: dict[str, list[st
     return bool(matched), sorted(matched)
 
 
-def search_new_hiphop_albums(token: str, target_date: str) -> list[dict[str, str]]:
-    """Fetch today's new releases and keep only albums whose artists match target genres."""
-    raw_albums = fetch_new_releases(token, target_date)
+def search_new_hiphop_albums(
+    token: str,
+    target_dates: set[str],
+    window_end: str,
+) -> list[dict[str, str]]:
+    """Fetch weekly new releases and keep only albums whose artists match target genres."""
+    raw_albums = fetch_new_releases(token, target_dates)
     artist_ids = sorted({artist["id"] for album in raw_albums for artist in album.get("artists", [])})
     genres_by_artist = get_artists_genres(token, artist_ids)
 
@@ -150,7 +172,7 @@ def search_new_hiphop_albums(token: str, target_date: str) -> list[dict[str, str
 
         albums_found.append(
             {
-                "discovery_date": target_date,
+                "discovery_date": window_end,
                 "release_date": album.get("release_date", ""),
                 "artists": ", ".join(artist["name"] for artist in album["artists"]),
                 "album": album["name"],
@@ -190,16 +212,21 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def update_history(path: Path, todays_rows: list[dict[str, str]], target_date: str) -> list[dict[str, str]]:
-    """Replace the target day's snapshot in the cumulative history and keep other days."""
+def update_history(
+    path: Path,
+    weekly_rows: list[dict[str, str]],
+    window_start: str,
+    window_end: str,
+) -> list[dict[str, str]]:
+    """Replace the current weekly window in cumulative history and keep other weeks."""
     history_rows = read_existing_history(path)
     history_rows = {
         key: row
         for key, row in history_rows.items()
-        if row["discovery_date"] != target_date
+        if not (window_start <= row["release_date"] <= window_end)
     }
 
-    for row in todays_rows:
+    for row in weekly_rows:
         history_rows[(row["discovery_date"], row["spotify_id"])] = row
 
     merged_rows = sorted(
@@ -212,28 +239,34 @@ def update_history(path: Path, todays_rows: list[dict[str, str]], target_date: s
 
 def main() -> None:
     now_in_paris = datetime.now(TIMEZONE)
-    target_date = now_in_paris.strftime("%Y-%m-%d")
+    week_start, week_end = get_week_window(now_in_paris.date())
+    week_start_str = week_start.strftime("%Y-%m-%d")
+    week_end_str = week_end.strftime("%Y-%m-%d")
+    target_dates = build_target_dates(week_start, week_end)
 
-    print(f"Searching for new hip-hop / rap albums released on {target_date} (Europe/Paris)...")
+    print(
+        "Searching for hip-hop / rap / R&B albums released between "
+        f"{week_start_str} and {week_end_str} (Europe/Paris)..."
+    )
 
     client_id = os.environ["SPOTIFY_CLIENT_ID"]
     client_secret = os.environ["SPOTIFY_CLIENT_SECRET"]
 
     token = get_spotify_token(client_id, client_secret)
-    todays_albums = search_new_hiphop_albums(token, target_date)
+    weekly_albums = search_new_hiphop_albums(token, target_dates, week_end_str)
 
-    write_csv(LATEST_CSV_PATH, todays_albums)
-    all_history = update_history(HISTORY_CSV_PATH, todays_albums, target_date)
+    write_csv(LATEST_CSV_PATH, weekly_albums)
+    all_history = update_history(HISTORY_CSV_PATH, weekly_albums, week_start_str, week_end_str)
 
-    print(f"Found {len(todays_albums)} album(s) for today.")
+    print(f"Found {len(weekly_albums)} album(s) for the weekly window.")
     print(f"Wrote {LATEST_CSV_PATH} and {HISTORY_CSV_PATH} ({len(all_history)} total row(s)).")
 
-    if todays_albums:
-        print("\nAlbums found today:")
-        for album in todays_albums:
-            print(f" - {album['artists']} — {album['album']} ({album['album_type']})")
+    if weekly_albums:
+        print("\nAlbums found in the weekly window:")
+        for album in weekly_albums:
+            print(f" - {album['release_date']} | {album['artists']} — {album['album']} ({album['album_type']})")
     else:
-        print("No hip-hop / rap albums found for today.")
+        print("No hip-hop / rap / R&B albums found for this weekly window.")
 
 
 if __name__ == "__main__":
