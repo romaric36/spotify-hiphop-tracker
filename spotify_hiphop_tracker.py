@@ -47,6 +47,13 @@ GENRE_KEYWORDS = [
     "rhythm and blues",
 ]
 
+SEARCH_QUERIES = [
+    'genre:"hip hop" tag:new',
+    'genre:rap tag:new',
+    'genre:"r&b" tag:new',
+    'genre:rnb tag:new',
+]
+
 
 def get_spotify_token(client_id: str, client_secret: str) -> str:
     """Get a Spotify API token using the Client Credentials flow."""
@@ -70,58 +77,48 @@ def get_json(url: str, token: str, params: dict | None = None) -> dict:
 
 
 def fetch_new_releases(token: str, target_date: str) -> list[dict]:
-    """
-    Fetch today's new releases from Spotify's browse catalog.
-
-    This endpoint is deprecated in Spotify's docs, so we keep the logic isolated
-    in case we need a future fallback.
-    """
+    """Best-effort fetch of today's new releases via the Search API."""
     albums_found: list[dict] = []
     albums_seen: set[str] = set()
-    offset = 0
 
-    while offset <= 200:
-        data = get_json(
-            "https://api.spotify.com/v1/browse/new-releases",
-            token,
-            params={"limit": 50, "offset": offset, "country": "FR"},
-        )
-        items = data["albums"]["items"]
-        if not items:
-            break
+    for query in SEARCH_QUERIES:
+        offset = 0
 
-        for album in items:
-            if album.get("release_date") != target_date:
-                continue
+        while offset <= 100:
+            data = get_json(
+                "https://api.spotify.com/v1/search",
+                token,
+                params={"q": query, "type": "album", "limit": 10, "offset": offset},
+            )
+            items = data["albums"]["items"]
+            if not items:
+                break
 
-            album_id = album["id"]
-            if album_id in albums_seen:
-                continue
+            for album in items:
+                if album.get("release_date") != target_date:
+                    continue
 
-            albums_seen.add(album_id)
-            albums_found.append(album)
+                album_id = album["id"]
+                if album_id in albums_seen:
+                    continue
 
-        if data["albums"]["next"] is None:
-            break
-        offset += 50
+                albums_seen.add(album_id)
+                albums_found.append(album)
+
+            if data["albums"]["next"] is None:
+                break
+            offset += 10
 
     return albums_found
 
 
 def get_artists_genres(token: str, artist_ids: list[str]) -> dict[str, list[str]]:
-    """Fetch genres for artists in batches of 50 using Spotify artist metadata."""
+    """Fetch genres for artists one by one using Spotify artist metadata."""
     genres_by_artist: dict[str, list[str]] = {}
 
-    for index in range(0, len(artist_ids), 50):
-        batch_ids = artist_ids[index:index + 50]
-        data = get_json(
-            "https://api.spotify.com/v1/artists",
-            token,
-            params={"ids": ",".join(batch_ids)},
-        )
-        for artist in data.get("artists", []):
-            if artist:
-                genres_by_artist[artist["id"]] = artist.get("genres", [])
+    for artist_id in artist_ids:
+        artist = get_json(f"https://api.spotify.com/v1/artists/{artist_id}", token)
+        genres_by_artist[artist_id] = artist.get("genres", [])
 
     return genres_by_artist
 
