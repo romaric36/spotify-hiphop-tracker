@@ -35,14 +35,16 @@ CSV_HEADERS = [
     "spotify_url",
     "image_url",
     "spotify_id",
+    "artist_genres",
 ]
 
-SEARCH_TERMS = [
-    '"hip hop" tag:new',
-    "hip-hop tag:new",
-    "rap tag:new",
-    "trap tag:new",
-    "drill tag:new",
+GENRE_KEYWORDS = [
+    "hip hop",
+    "hip-hop",
+    "rap",
+    "r&b",
+    "rnb",
+    "rhythm and blues",
 ]
 
 
@@ -59,73 +61,110 @@ def get_spotify_token(client_id: str, client_secret: str) -> str:
     return response.json()["access_token"]
 
 
-def search_new_hiphop_albums(token: str, target_date: str) -> list[dict[str, str]]:
-    """
-    Search for recent hip-hop / rap albums and keep only those released today.
-
-    Spotify's former dedicated new-releases endpoint is no longer available, so
-    this tracker relies on search queries with `tag:new`.
-    """
+def get_json(url: str, token: str, params: dict | None = None) -> dict:
+    """Perform a Spotify GET request and return JSON."""
     headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers, params=params, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+def fetch_new_releases(token: str, target_date: str) -> list[dict]:
+    """
+    Fetch today's new releases from Spotify's browse catalog.
+
+    This endpoint is deprecated in Spotify's docs, so we keep the logic isolated
+    in case we need a future fallback.
+    """
+    albums_found: list[dict] = []
     albums_seen: set[str] = set()
+    offset = 0
+
+    while offset <= 200:
+        data = get_json(
+            "https://api.spotify.com/v1/browse/new-releases",
+            token,
+            params={"limit": 50, "offset": offset, "country": "FR"},
+        )
+        items = data["albums"]["items"]
+        if not items:
+            break
+
+        for album in items:
+            if album.get("release_date") != target_date:
+                continue
+
+            album_id = album["id"]
+            if album_id in albums_seen:
+                continue
+
+            albums_seen.add(album_id)
+            albums_found.append(album)
+
+        if data["albums"]["next"] is None:
+            break
+        offset += 50
+
+    return albums_found
+
+
+def get_artists_genres(token: str, artist_ids: list[str]) -> dict[str, list[str]]:
+    """Fetch genres for artists in batches of 50 using Spotify artist metadata."""
+    genres_by_artist: dict[str, list[str]] = {}
+
+    for index in range(0, len(artist_ids), 50):
+        batch_ids = artist_ids[index:index + 50]
+        data = get_json(
+            "https://api.spotify.com/v1/artists",
+            token,
+            params={"ids": ",".join(batch_ids)},
+        )
+        for artist in data.get("artists", []):
+            if artist:
+                genres_by_artist[artist["id"]] = artist.get("genres", [])
+
+    return genres_by_artist
+
+
+def album_matches_target_genres(album: dict, genres_by_artist: dict[str, list[str]]) -> tuple[bool, list[str]]:
+    """Return whether any contributing artist matches the target genre list."""
+    matched: set[str] = set()
+
+    for artist in album.get("artists", []):
+        for genre in genres_by_artist.get(artist["id"], []):
+            normalized = genre.lower()
+            if any(keyword in normalized for keyword in GENRE_KEYWORDS):
+                matched.add(genre)
+
+    return bool(matched), sorted(matched)
+
+
+def search_new_hiphop_albums(token: str, target_date: str) -> list[dict[str, str]]:
+    """Fetch today's new releases and keep only albums whose artists match target genres."""
+    raw_albums = fetch_new_releases(token, target_date)
+    artist_ids = sorted({artist["id"] for album in raw_albums for artist in album.get("artists", [])})
+    genres_by_artist = get_artists_genres(token, artist_ids)
+
     albums_found: list[dict[str, str]] = []
-    for query in SEARCH_TERMS:
-        offset = 0
+    for album in raw_albums:
+        matches, matched_genres = album_matches_target_genres(album, genres_by_artist)
+        if not matches:
+            continue
 
-        while offset <= 200:
-            response = requests.get(
-                "https://api.spotify.com/v1/search",
-                headers=headers,
-                params={
-                    "q": query,
-                    "type": "album",
-                    "limit": 50,
-                    "offset": offset,
-                },
-                timeout=10,
-            )
-
-            # Spotify can reject some advanced search syntaxes with HTTP 400.
-            # We skip those queries instead of failing the whole daily job.
-            if response.status_code == 400:
-                print(f"Skipping unsupported Spotify query: {query}")
-                break
-
-            response.raise_for_status()
-            data = response.json()
-            items = data["albums"]["items"]
-
-            if not items:
-                break
-
-            for album in items:
-                release_date = album.get("release_date", "")
-                if release_date != target_date:
-                    continue
-
-                album_id = album["id"]
-                if album_id in albums_seen:
-                    continue
-
-                albums_seen.add(album_id)
-                albums_found.append(
-                    {
-                        "discovery_date": target_date,
-                        "release_date": release_date,
-                        "artists": ", ".join(artist["name"] for artist in album["artists"]),
-                        "album": album["name"],
-                        "album_type": album.get("album_type", "").capitalize(),
-                        "total_tracks": str(album.get("total_tracks", 0)),
-                        "spotify_url": album["external_urls"].get("spotify", ""),
-                        "image_url": album["images"][0]["url"] if album.get("images") else "",
-                        "spotify_id": album_id,
-                    }
-                )
-
-            if data["albums"]["next"] is None:
-                break
-
-            offset += 50
+        albums_found.append(
+            {
+                "discovery_date": target_date,
+                "release_date": album.get("release_date", ""),
+                "artists": ", ".join(artist["name"] for artist in album["artists"]),
+                "album": album["name"],
+                "album_type": album.get("album_type", "").capitalize(),
+                "total_tracks": str(album.get("total_tracks", 0)),
+                "spotify_url": album["external_urls"].get("spotify", ""),
+                "image_url": album["images"][0]["url"] if album.get("images") else "",
+                "spotify_id": album["id"],
+                "artist_genres": ", ".join(matched_genres),
+            }
+        )
 
     return sorted(albums_found, key=lambda album: (album["artists"].lower(), album["album"].lower()))
 
