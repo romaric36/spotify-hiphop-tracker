@@ -190,9 +190,14 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def update_history(path: Path, todays_rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Merge today's rows into the cumulative history without duplicates."""
+def update_history(path: Path, todays_rows: list[dict[str, str]], target_date: str) -> list[dict[str, str]]:
+    """Replace the target day's snapshot in the cumulative history and keep other days."""
     history_rows = read_existing_history(path)
+    history_rows = {
+        key: row
+        for key, row in history_rows.items()
+        if row["discovery_date"] != target_date
+    }
 
     for row in todays_rows:
         history_rows[(row["discovery_date"], row["spotify_id"])] = row
@@ -218,7 +223,7 @@ def main() -> None:
     todays_albums = search_new_hiphop_albums(token, target_date)
 
     write_csv(LATEST_CSV_PATH, todays_albums)
-    all_history = update_history(HISTORY_CSV_PATH, todays_albums)
+    all_history = update_history(HISTORY_CSV_PATH, todays_albums, target_date)
 
     print(f"Found {len(todays_albums)} album(s) for today.")
     print(f"Wrote {LATEST_CSV_PATH} and {HISTORY_CSV_PATH} ({len(all_history)} total row(s)).")
